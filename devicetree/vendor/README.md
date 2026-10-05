@@ -16,5 +16,13 @@
 * rk3588s-fydetab-duo: <https://github.com/Linux-for-Fydetab-Duo/linux-rockchip/tree/14294048d2a0deb7f38c890329aded87038d3299/arch/arm64/boot/dts/rockchip>
   (note: dtb taken from the `noble` branch which is based on the rockchip 6.1 rkr3 bsp kernel)
 
+* rk3588-yjh-jm10 (Yijiahe JM10-3588): taken from the `armbian-build-jm10` tree
+  (<https://github.com/armbian/build>-based), which builds it from
+  `userpatches/kernel/rockchip-6.1-yjh-jm10/` on top of the same
+  `armbian/linux-rockchip` `vendor` (rk-6.1-rkr) branch as the first entry above.
+  It is byte-identical to the DTB the board currently boots with, so the OS sees
+  the same MV88E6190 DSA topology under UEFI as it does under U-Boot.
+  (md5 f51e925c7659394944920dc99fe54a4d)
+
 ## License
 SPDX-License-Identifier: GPL-2.0-only
