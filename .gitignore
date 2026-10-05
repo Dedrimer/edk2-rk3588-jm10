@@ -2,6 +2,7 @@ boot-*.img
 uefi-*.img
 uefi-*.img.gz
 workspace
+logs
 *.dll
 ramdisk
 .cache

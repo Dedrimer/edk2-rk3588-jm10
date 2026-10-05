@@ -232,7 +232,8 @@ function _build(){
             DEBUG=0
         fi
 
-        make PLAT=${TFA_PLAT} DEBUG=${DEBUG} all ${TFA_FLAGS}
+        echo " > make PLAT=${TFA_PLAT} DEBUG=${DEBUG} ${TFA_VERBOSE_FLAGS} all ${TFA_FLAGS}"
+        make PLAT=${TFA_PLAT} DEBUG=${DEBUG} ${TFA_VERBOSE_FLAGS} all ${TFA_FLAGS}
 
         popd
     fi
@@ -256,16 +257,21 @@ function _build(){
     PACKAGES_PATH+=":${ROOTDIR}/edk2-rockchip-non-osi"
     export PACKAGES_PATH
 
+    echo " > make -C ${ROOTDIR}/edk2/BaseTools"
     make -C "${ROOTDIR}/edk2/BaseTools"
+    echo " > source ${ROOTDIR}/edk2/edksetup.sh --reconfig"
     source "${ROOTDIR}/edk2/edksetup.sh" --reconfig
 
+    # The exact command is echoed into the log before it runs, so a failed
+    # build can be reproduced by hand from the log alone.
+    echo " > build -n ${EDK2_JOBS} -a AARCH64 -t ${TOOLCHAIN} -p ${ROOTDIR}/${DSC_FILE} -b ${RELEASE_TYPE} ${EDK2_VERBOSE_FLAGS} ..."
     build \
-        -s \
-        -n 0 \
+        -n "${EDK2_JOBS}" \
         -a AARCH64 \
         -t "${TOOLCHAIN}" \
         -p "${ROOTDIR}/${DSC_FILE}" \
         -b "${RELEASE_TYPE}" \
+        ${EDK2_VERBOSE_FLAGS} \
         -D FIRMWARE_VER="${GIT_COMMIT}" \
         -D NETWORK_ALLOW_HTTP_CONNECTIONS=TRUE \
         -D NETWORK_ISCSI_ENABLE=TRUE \
@@ -285,6 +291,129 @@ function _clean() { rm --one-file-system --recursive --force "${OUTDIR}"/workspa
 function _distclean() { if [ -d .git ]; then git clean -xdf; else _clean; fi; }
 
 #
+# Logging
+#
+# Every line the build writes - to stdout and to stderr, including the output
+# of the TF-A and EDK2 sub-builds, of patch/make/dd/mkimage and of shell
+# traces - is mirrored into a timestamped file under ./logs. Nothing is
+# filtered, so the file on disk is a complete transcript of the run and can be
+# analysed after the fact.
+#
+function _log_setup() {
+    local name="${DEVICE:-unknown}"
+    [ "${name}" == "all" ] && name="all"
+
+    LOG_DIR="${ROOTDIR}/logs"
+    mkdir -p "${LOG_DIR}" || _error "Cannot create log directory ${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/${name}-${RELEASE_TYPE}-$(date +%Y%m%d-%H%M%S).log"
+
+    # Mirror stdout+stderr to the console and to the log file. tee is run with
+    # unbuffered stdio (stdbuf) so that the last lines reach the file even if
+    # the build is killed or the machine goes down mid-compile.
+    if command -v stdbuf >/dev/null 2>&1; then
+        exec > >(stdbuf -o0 -e0 tee -a "${LOG_FILE}") 2>&1
+    else
+        exec > >(tee -a "${LOG_FILE}") 2>&1
+    fi
+
+    trap _log_summary EXIT
+
+    echo "==============================================================================="
+    echo "build.sh started : $(date -Is)"
+    echo "host             : $(uname -srm)"
+    echo "working dir      : ${OUTDIR}"
+    echo "device           : ${DEVICE}"
+    echo "release          : ${RELEASE_TYPE}"
+    echo "toolchain        : ${TOOLCHAIN}"
+    echo "open-tfa         : ${OPEN_TFA}"
+    echo "tfa-flags        : ${TFA_FLAGS}"
+    echo "edk2-flags       : ${EDK2_FLAGS}"
+    echo "edk2 verbose     : ${EDK2_VERBOSE_FLAGS}"
+    echo "edk2 jobs        : ${EDK2_JOBS}"
+    echo "log file         : ${LOG_FILE}"
+    echo "==============================================================================="
+}
+
+#
+# Runs before anything is compiled, so that a missing host tool is reported as
+# "you are missing iasl" rather than as a confusing module build failure deep
+# in the EDK2 output.
+#
+function _check_build_deps() {
+    local missing=()
+    local tool
+
+    # Invoked directly by this script or by the EDK2 build rules.
+    #   iasl      : compiles the platform DSDT (DSC-side, via $(ASL_PATH)).
+    #               Omitted from most distro images and easy to overlook.
+    #   python3   : BaseTools and the FIT/patch helpers.
+    #   make/git/patch/dd/mkimage : everything else in the pipeline.
+    for tool in iasl python3 make git patch dd; do
+        command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+    done
+
+    # Cross compiler, unless we happen to be building natively on aarch64.
+    if [ "$(uname -m)" != "aarch64" ]; then
+        command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || missing+=("${CROSS_COMPILE}gcc")
+    fi
+
+    # misc/extractbl31.py runs unconditionally as part of building the FIT
+    # image, and imports pyelftools. Note this is needed *after* EDK2 and TF-A
+    # have built, so without the check a missing module surfaces only at the
+    # very end of a successful build.
+    if ! python3 -c "import elftools" >/dev/null 2>&1; then
+        missing+=("python3-pyelftools")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Missing build tools: ${missing[*]}" >&2
+        echo >&2
+        echo "On Debian/Ubuntu install them with:" >&2
+        echo "    sudo apt install acpica-tools python3-pyelftools uuid-dev \\" >&2
+        echo "                     device-tree-compiler gcc-aarch64-linux-gnu" >&2
+        _error "Aborting before the build starts."
+    fi
+
+    # Only needed for boards whose device tree is built from source.
+    if ! command -v dtc >/dev/null 2>&1; then
+        echo "WARNING: 'dtc' not found (device-tree-compiler) - device trees built"
+        echo "         from a .dts source will fail; prebuilt .dtb blobs are unaffected."
+    fi
+
+    echo "host tools       : iasl $(iasl -v 2>/dev/null | awk '/version/{print $NF; exit}'), $(python3 --version 2>&1), $(${CROSS_COMPILE}gcc --version 2>/dev/null | head -1)"
+}
+
+#
+# Runs from the EXIT trap set up by _log_setup, so the log ends with the exit
+# status and a pointer to every log file the sub-builds produced on their own.
+#
+function _log_summary() {
+    local rc=$?
+    local log
+
+    echo "==============================================================================="
+    echo "build.sh finished: $(date -Is)"
+    echo "exit code        : ${rc}"
+
+    if [ -n "${WORKSPACE}" ] && [ -n "${PLATFORM_NAME}" ] && [ -n "${RELEASE_TYPE}" ] && [ -n "${TOOLCHAIN}" ]; then
+        for log in "${WORKSPACE}/Build/${PLATFORM_NAME}/"*.log \
+                   "${WORKSPACE}/Build/${PLATFORM_NAME}/${RELEASE_TYPE}_${TOOLCHAIN}/"*.log; do
+            [ -f "${log}" ] && echo "sub-build log    : ${log}"
+        done
+    fi
+
+    echo "full log         : ${LOG_FILE}"
+
+    if [ "${rc}" -ne 0 ]; then
+        echo
+        echo "Build FAILED (exit ${rc}). The complete output is in:"
+        echo "    ${LOG_FILE}"
+    fi
+    echo "==============================================================================="
+    return 0
+}
+
+#
 # Default variables
 #
 typeset -l DEVICE
@@ -299,6 +428,19 @@ SKIP_PATCHSETS=false
 CLEAN=false
 DISTCLEAN=false
 OUTDIR="${PWD}"
+
+#
+# Verbosity of the two compilers. Both are turned up so that the on-disk log
+# is self-contained; an explicitly empty value (e.g. EDK2_VERBOSE_FLAGS=) drops
+# the extra detail and leaves the compiler at its own default:
+#   EDK2_VERBOSE_FLAGS : "-v" makes EDK2 print every compile command line
+#   TFA_VERBOSE_FLAGS  : "V=1" makes the TF-A makefile echo every command
+#   EDK2_JOBS          : "0" keeps EDK2's automatic job count; "1" builds
+#                        serially, which makes the log strictly ordered and
+#                        much easier to read when something goes wrong
+EDK2_VERBOSE_FLAGS="${EDK2_VERBOSE_FLAGS--v}"
+TFA_VERBOSE_FLAGS="${TFA_VERBOSE_FLAGS-V=1}"
+EDK2_JOBS="${EDK2_JOBS-0}"
 
 #
 # Get options
@@ -358,6 +500,11 @@ cd "${ROOTDIR}" || exit 1
 
 # Exit on first error
 set -e
+
+# From here on, capture everything (stdout+stderr) to ./logs/<file>.log as well
+# as the console. Anything that goes wrong later is therefore on disk.
+_log_setup
+_check_build_deps
 
 if [ "${DEVICE}" == "all" ]
 then
