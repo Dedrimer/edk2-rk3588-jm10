@@ -36,6 +36,18 @@ function apply_patchset() {
         return 1
     fi
 
+    # Refuse to operate on a directory that is not its own git checkout.
+    # The submodules start life as empty directories, and 'git -C <empty dir>'
+    # searches upwards and finds the enclosing repository - so the reset/clean
+    # further down would otherwise reset THIS repository and delete every
+    # untracked file in it, including board support that has not been committed
+    # yet.
+    if [ ! -e "${target_dir}/.git" ]; then
+        echo "Patchset target is not a git checkout: ${target_dir}"
+        echo "Run 'git submodule update --init --recursive' before building."
+        return 1
+    fi
+
     echo "Checking patchset ${patches_dir} for ${target_dir}"
 
     local patchset_name=$(basename "${patches_dir}")
