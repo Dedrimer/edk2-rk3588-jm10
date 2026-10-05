@@ -8,6 +8,11 @@
 *
 *  SPDX-License-Identifier: BSD-2-Clause-Patent
 *
+*  The board is described to the OS with ACPI only; the matching tables are in
+*  Platform/Yijiahe/JM10/AcpiTables. The hooks here are the parts of the board
+*  bring-up that ACPI cannot describe at all - pin muxing, the RK806 rails, the
+*  fan and LED pins, the USB VBUS switch and the PCIe reset line.
+*
 *  Hardware notes (all pin references come from the vendor device tree
 *  rk3588-yjh-jm10.dts):
 *
@@ -17,7 +22,8 @@
 *     the switch through a fixed 1000 Mbit RGMII link. RK3588_GMAC_ENABLE is
 *     FALSE in JM10.dsc, so the GmacIomux()/GmacIoPhyReset() hooks below are
 *     not reached on a default build - they are kept correct for the day the
-*     MAC is enabled.
+*     MAC is enabled. The MAC itself is described to the OS by Gmac0.asl, but
+*     the switch behind it cannot be: DSA is a device-tree framework.
 *   - No TTL debug UART is routed. UEFI's debug output stays on UART2, so the
 *     only usable console is the graphical one (HDMI / Type-C DP).
 *
@@ -390,17 +396,19 @@ PlatformGetDtbFileGuid (
   IN UINT32  CompatMode
   )
 {
-  STATIC CONST EFI_GUID  VendorDtbFileGuid = {
-    // DeviceTree/Vendor.inf
-    0xd58b4028, 0x43d8, 0x4e97, { 0x87, 0xd4, 0x4e, 0x37, 0x16, 0x13, 0x65, 0x80 }
-  };
-
-  switch (CompatMode) {
-    case FDT_COMPAT_MODE_VENDOR:
-      return &VendorDtbFileGuid;
-  }
-
-  /* No mainline device tree for this board. */
+  /*
+   * This platform is ACPI-only: no device tree is embedded in the firmware
+   * (there is no DeviceTree/ module in the package and no DTB INF in the FDF)
+   * and none is published to the OS. Returning NULL is what tells the firmware
+   * that both device-tree compatibility modes are unsupported, so the setup
+   * menu stops offering them (see IsFdtCompatModeSupported in RK3588Dxe) and
+   * FdtPlatformDxe stays out of the way.
+   *
+   * The board's MV88E6190 switch still needs a device tree - Linux's DSA
+   * framework cannot be expressed in ACPI - so whoever wants that switch back
+   * has to re-add a DeviceTree module and repoint this function at it.
+   */
+  (VOID) CompatMode;
   return NULL;
 }
 

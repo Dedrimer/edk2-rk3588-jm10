@@ -7,7 +7,8 @@
 ##
 
   # ACPI Support
+  #
+  # This platform is ACPI-only - there is deliberately no DeviceTree/ module
+  # here. See the header of AcpiTables/Dsdt.asl for what that means for the
+  # board's MV88E6190 switch.
   INF RuleOverride = ACPITABLE $(PLATFORM_DIRECTORY)/AcpiTables/AcpiTables.inf
-
-  # Device Tree Support
-  INF RuleOverride = DTB $(PLATFORM_DIRECTORY)/DeviceTree/Vendor.inf

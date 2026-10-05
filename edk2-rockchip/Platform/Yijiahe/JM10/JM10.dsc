@@ -1,5 +1,13 @@
 ## @file
 #
+#  Yijiahe JM10-3588 (RK3588) - ACPI-only platform.
+#
+#  The board is described entirely with ACPI tables (AcpiTables/Dsdt.asl and
+#  its includes); no device tree is embedded in the firmware or published to
+#  the OS. The translation of the vendor device tree that the OS image is
+#  built with (armbian-build-jm10, userpatches/kernel/rockchip-6.1-yjh-jm10)
+#  lives in AcpiTables/Dsdt.asl, which also lists what ACPI cannot express.
+#
 #  Copyright (c) 2026, Yijiahe JM10 port
 #
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -35,20 +43,20 @@
   # RkFvbDxe has no hard dependency on NorFlashDxe).
   DEFINE RK_NOR_FLASH_ENABLE = FALSE
 
-  # Ethernet: seven RJ45 ports hang off a Marvell MV88E6190 DSA switch, whose
-  # two CPU ports are wired to GMAC0 (rgmii) and - unconfirmed - GMAC1. There is
-  # no UEFI driver for the switch, and bringing up the MAC alone does not help:
-  # the switch comes out of reset with every port disabled and an empty VLAN
-  # table, and nothing forwards until it is programmed.
+  # Ethernet is present but is not driven from the firmware: seven RJ45 ports
+  # hang off a Marvell MV88E6190 DSA switch whose CPU port is wired to GMAC0
+  # over a fixed 1000 Mbit RGMII link. There is no UEFI driver for the switch,
+  # and bringing up the MAC alone does not help - the switch leaves reset with
+  # every port disabled and an empty VLAN table, and nothing forwards until it
+  # is programmed.
   #
-  # Rather than have the firmware poke the MAC/MDIO (and the switch reset line
-  # on GPIO4_B3) for no benefit, leave the whole path to the OS, which drives
-  # the switch through Linux's mv88e6xxx/DSA driver. Consequence: no UEFI-side
-  # networking (no PXE/HTTP boot), which is fine because this board boots from
-  # local storage (eMMC firmware + mSATA OS).
+  # On top of that, Linux's DSA framework is device-tree only, so the switch
+  # topology cannot be represented in the ACPI tables either (see the note in
+  # AcpiTables/Dsdt.asl). The MAC itself is still described by Gmac0.asl so the
+  # OS knows the controller exists; the seven ports are not usable this way.
   #
-  # Flip this to TRUE together with PcdGmac0Supported if the MAC is ever wanted
-  # inside UEFI.
+  # Flip this to TRUE together with PcdGmac0Supported to also have the firmware
+  # poke the MAC/MDIO and the shared switch reset line (GPIO4_B3).
   DEFINE RK3588_GMAC_ENABLE = FALSE
 
   #
@@ -100,11 +108,12 @@
   # do NOT copy the "PcdDwcSdhciDisableHs400|TRUE" workaround some other boards
   # need.
 
-  # GMAC PCDs are omitted because RK3588_GMAC_ENABLE is FALSE above. To
-  # experiment with UEFI-side networking, set RK3588_GMAC_ENABLE = TRUE and
-  # uncomment the following (tx_delay from the device tree; gmac1 is only a
-  # guess - the board appears to have a second CPU link to the switch, but the
-  # vendor device tree only describes gmac0):
+  # GMAC PCDs are omitted because RK3588_GMAC_ENABLE is FALSE above - without
+  # the UEFI driver the delays would have nothing to program them into. The
+  # MAC is still described to the OS through Gmac0.asl. To bring it up inside
+  # UEFI (to debug the link towards the switch), set RK3588_GMAC_ENABLE = TRUE
+  # and uncomment these; tx_delay is from the device tree, and gmac1 is only a
+  # guess, since the vendor device tree wires the switch to gmac0 alone:
   # gRK3588TokenSpaceGuid.PcdGmac0Supported|TRUE
   # gRK3588TokenSpaceGuid.PcdGmac0TxDelay|0x45
   # gRK3588TokenSpaceGuid.PcdGmac0RxDelay|0x00
@@ -147,6 +156,13 @@
   gRK3588TokenSpaceGuid.PcdHasOnBoardFanOutput|TRUE
 
   #
+  # I2S0 drives the RT5651 codec that sits on I2C7. The codec node itself is
+  # board specific and lives in AcpiTables/Rt5651.asl; this flag only controls
+  # whether the shared I2S0 device (I2s.asl) is emitted.
+  #
+  gRK3588TokenSpaceGuid.PcdI2S0Supported|TRUE
+
+  #
   # Display: HDMI0 on the HDMI connector, DP0 on the Type-C port (USB-C
   # DisplayPort alt-mode, one cable orientation only - a firmware-wide
   # limitation, not board specific). DP1 is left out because no DP1 connector
@@ -161,15 +177,16 @@
   #
   # ACPI / Device Tree mode.
   #
-  # Default is ACPI+FDT ("both"), but Linux prefers ACPI when both tables are
-  # present, and the MV88E6190 switch is only ever driven through the device
-  # tree (Linux mv88e6xxx/DSA). Publish the device tree only, so the OS sees
-  # exactly the same DTB it does today.
+  # ACPI only. The board used to publish the vendor device tree because the
+  # MV88E6190 switch is only ever driven through it (Linux mv88e6xxx/DSA); with
+  # the board now described by the ACPI tables in AcpiTables/, the device tree
+  # is neither embedded in the firmware (there is no DeviceTree/ module below)
+  # nor published, so the OS is handed ACPI and nothing else.
   #
-  gRK3588TokenSpaceGuid.PcdConfigTableModeDefault|$(CONFIG_TABLE_MODE_FDT)
-
-  # Vendor DTB only - this board has no mainline device tree.
-  gRK3588TokenSpaceGuid.PcdFdtCompatModeDefault|$(FDT_COMPAT_MODE_VENDOR)
+  # Ethernet is the one casualty of that decision and it is unavoidable: DSA
+  # cannot be described in ACPI. See the header of AcpiTables/Dsdt.asl.
+  #
+  gRK3588TokenSpaceGuid.PcdConfigTableModeDefault|$(CONFIG_TABLE_MODE_ACPI)
 
 ################################################################################
 #
@@ -179,6 +196,3 @@
 [Components.common]
   # ACPI Support
   $(PLATFORM_DIRECTORY)/AcpiTables/AcpiTables.inf
-
-  # Device Tree Support
-  $(PLATFORM_DIRECTORY)/DeviceTree/Vendor.inf

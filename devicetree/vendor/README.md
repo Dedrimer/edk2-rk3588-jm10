@@ -20,9 +20,15 @@
   (<https://github.com/armbian/build>-based), which builds it from
   `userpatches/kernel/rockchip-6.1-yjh-jm10/` on top of the same
   `armbian/linux-rockchip` `vendor` (rk-6.1-rkr) branch as the first entry above.
-  It is byte-identical to the DTB the board currently boots with, so the OS sees
-  the same MV88E6190 DSA topology under UEFI as it does under U-Boot.
   (md5 f51e925c7659394944920dc99fe54a4d)
+
+  **Not shipped by any platform any more.** The Yijiahe JM10 platform
+  describes the board with ACPI tables instead
+  (`Platform/Yijiahe/JM10/AcpiTables/`), so this file is no longer embedded in
+  the firmware or published to the OS. It is kept as the reference the ACPI
+  translation was written against - in particular the MV88E6190 switch
+  topology, which ACPI cannot express and which is therefore the one board
+  feature the ACPI-only image does not provide.
 
 ## License
 SPDX-License-Identifier: GPL-2.0-only
